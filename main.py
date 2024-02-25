@@ -1,12 +1,15 @@
 # Import packages
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from keras.models import Sequential
 from keras.layers import Dense, LSTM
 import requests
+from datetime import timedelta
 
-def fetch_intraday_data(symbol, api_token, range='5dm'):
+def fetch_intraday_data(symbol, api_token, range='20Y'):
     url = f'https://cloud.iexapis.com/stable/stock/{symbol}/chart/{range}?token={api_token}'
     try:
         response = requests.get(url)
@@ -15,65 +18,87 @@ def fetch_intraday_data(symbol, api_token, range='5dm'):
         df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
-        df.drop(columns=['minute'], inplace=True)  # Drop non-numeric column 'minute'
-        return df
+
+        # Exclude non-numeric columns
+        numeric_data = df.select_dtypes(include=[np.number])
+
+        # Check if 'minute' column exists before dropping
+        if 'minute' in numeric_data.columns:
+            numeric_data.drop(columns=['minute'], inplace=True)  # Drop non-numeric column 'minute'
+
+        return numeric_data
     except requests.exceptions.RequestException as e:
         print("Error fetching data:", e)
         return None
 
-def train_lstm_model(data, time_steps=100, epochs=10):
-    # Exclude non-numeric columns
-    numeric_data = data.select_dtypes(include=[np.number])
+def train_lstm_model(data, time_steps=None, epochs=10, validation_split=0.2):
+    # Split data into training and validation sets
+    train_size = int(len(data) * (1 - validation_split))
+    train_data = data.iloc[:train_size]
+    val_data = data.iloc[train_size:]
 
-    if not numeric_data.empty:
-        # Normalize the data
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(numeric_data.values)
+    # Normalize the data
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_train_data = scaler.fit_transform(train_data)
+    scaled_val_data = scaler.transform(val_data)
 
-        # Prepare the data for LSTM
-        if len(scaled_data) > time_steps:
-            X = []  # Initialize X as an empty list
-            for i in range(len(scaled_data) - time_steps):
-                X.append(scaled_data[i: (i + time_steps), :])  # Append directly as NumPy arrays
+    # Prepare training data
+    X_train, y_train = [], []
+    for i in range(len(scaled_train_data) - time_steps):
+        X_train.append(scaled_train_data[i: (i + time_steps), :])
+        y_train.append(scaled_train_data[i + time_steps, :])
 
-            X = np.array(X)  # Convert the list of windows to a NumPy array
-            y = scaled_data[time_steps:, :]  # Create the target values
+    X_train, y_train = np.array(X_train), np.array(y_train)
 
-            # Get the number of features from the shape of the windows in X
-            num_features = X.shape[2]
+    # Prepare validation data
+    X_val, y_val = [], []
+    for i in range(len(scaled_val_data) - time_steps):
+        X_val.append(scaled_val_data[i: (i + time_steps), :])
+        y_val.append(scaled_val_data[i + time_steps, :])
 
-            # Create the LSTM network
-            model = Sequential()
-            model.add(LSTM(units=50, return_sequences=True, input_shape=(time_steps, num_features)))
-            model.add(LSTM(units=50))
-            model.add(Dense(num_features))  # Output layer with the same number of features as input
+    X_val, y_val = np.array(X_val), np.array(y_val)
 
-            model.compile(loss='mean_squared_error', optimizer='adam')
+    # Create the LSTM network
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(time_steps, X_train.shape[2])))
+    model.add(LSTM(units=50, return_sequences=True))  # Second LSTM layer
+    model.add(LSTM(units=50))  # Third LSTM layer
+    model.add(Dense(X_train.shape[2]))
 
-            # Train the model
-            model.fit(X, y, epochs=epochs, batch_size=1, verbose=2)
+    model.compile(loss='mean_squared_error', optimizer='adam')
 
-            return model, scaler
-        else:
-            print("Not enough data for the specified time steps.")
-    else:
-        print("No numeric columns found in the data.")
-    return None, None
+    # Train the model
+    history = model.fit(X_train, y_train, epochs=epochs, validation_data=(X_val, y_val))
 
-def get_predicted_price(model, scaler, data):
-    # Separate numerical features (excluding time)
-    numeric_data = data[:, 1:].astype(float)  # Assuming time is in the first column, convert to float
+    # Plot training & validation loss values
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('Model loss')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Validation'], loc='upper left')
+    plt.show()
 
-    # Check if all values are numerical
-    if np.isnan(numeric_data).any():
-        # Handle NaN values (e.g., impute or remove)
-        numeric_data = numeric_data[~np.isnan(numeric_data).any(axis=1)]  # Remove rows containing NaN values
+    # Make predictions on the validation set
+    val_predictions = model.predict(X_val)
 
+    # Inverse transform to get original prices
+    val_predictions = scaler.inverse_transform(val_predictions)
+    y_val_orig = scaler.inverse_transform(y_val)
+
+    # Calculate evaluation metrics
+    mae = mean_absolute_error(y_val_orig, val_predictions)
+    mse = mean_squared_error(y_val_orig, val_predictions)
+
+    print("Mean Absolute Error on Validation Set:", mae)
+    print("Mean Squared Error on Validation Set:", mse)
+
+    return model, scaler
+def get_predicted_price(model, scaler, time_steps, data):
     # Apply data normalization
-    scaled_data = scaler.transform(numeric_data)
+    scaled_data = scaler.transform(data.astype(float))
 
     # Prepare data for LSTM
-    time_steps = 100  # Example value, adjust as needed
     X = []
     for i in range(len(scaled_data) - time_steps):
         X.append(scaled_data[i: (i + time_steps), :])
@@ -89,37 +114,67 @@ def get_predicted_price(model, scaler, data):
     return predicted_price
 
 # Define a threshold value
-threshold = 5  # You can adjust this threshold value according to preference
+#threshold = 5  # You can adjust this threshold value according to preference
 
 # IEX Cloud API token with stock ticker
 api_token = 'pk_91452d2ecfaa41aead503d79464f6005'
-symbol = 'NVDA'
-data = fetch_intraday_data(symbol, api_token)
+symbol = 'GME'
+
+# Fetch intraday data for the past 20 years
+data = fetch_intraday_data(symbol, api_token, range='20Y')
 
 if data is not None:
     print("Intraday data:")
     print(data.head())
 
-    # Train LSTM model
-    model, scaler = train_lstm_model(data)
+    # Train multiple LSTM models with different random initializations
+    num_models = 10
+    models = []
+    scalers = []
+    for _ in range(num_models):
+        model, scaler = train_lstm_model(data, time_steps=100)
+        models.append(model)
+        scalers.append(scaler)
+
+    # Get predictions from each model
+    predicted_prices = []
+    for model, scaler in zip(models, scalers):
+        predicted_price = get_predicted_price(model, scaler, 100, data.values)
+        predicted_prices.append(predicted_price)
+
+    # Average the predictions
+    average_predicted_price = np.mean(predicted_prices, axis=0)
 
     # Assume current price of stock (you can get this from your data or another source)
     current_price = data.iloc[-1]['close']
 
-    # Get the predicted price
-    if model is not None and scaler is not None:
-        predicted_price = get_predicted_price(model, scaler, data.values)
-        print("Predicted price:", predicted_price)
+    # Calculate the expected price based on the average predicted change
+    predicted_change = average_predicted_price[0][0]
+    expected_price = current_price + predicted_change
+    print("Expected price:", expected_price)
 
-        # Calculate the expected price based on the predicted change
-        predicted_change = predicted_price[0][0]
-        expected_price = current_price + predicted_change
-        print("Expected price:", expected_price)
+    # Convert predicted_change to integer before using it in timedelta calculation
+    predicted_change_days = int(predicted_change)
 
-        # Compare the LSTM model's predicted price change with the current price
-        if predicted_change > 0:
-            print("The stock is expected to rise.")
-        elif predicted_change < 0:
-            print("The stock is expected to fall.")
-        else:
-            print("The stock is expected to remain stable.")
+    # List to store forecasted dates and expected prices
+    forecasts = []
+
+    # Calculate the forecasted date for the expected price
+    for i in range(1, 6):  # Assuming you want to forecast the next 5 days
+        forecasted_date = data.index[-1] + timedelta(days=i * predicted_change_days)  # Assuming daily frequency
+        forecasted_price = current_price + i * predicted_change
+        forecasts.append((forecasted_date, forecasted_price))
+
+    # Print forecasted dates and expected prices
+    for forecast in forecasts:
+        print("Forecasted date for expected price:", forecast[0])
+        print("Expected price:", forecast[1])
+
+    # Compare the ensemble model's predicted price change with the current price
+    if predicted_change > 0:
+        print("The stock is expected to rise.")
+    elif predicted_change < 0:
+        print("The stock is expected to fall.")
+    else:
+        print("The stock is expected to remain stable.")
+
