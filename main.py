@@ -2,7 +2,6 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.utils import check_array
 from keras.models import Sequential
 from keras.layers import Dense, LSTM
 import requests
@@ -21,6 +20,7 @@ def fetch_intraday_data(symbol, api_token, range='5dm'):
     except requests.exceptions.RequestException as e:
         print("Error fetching data:", e)
         return None
+
 def train_lstm_model(data, time_steps=100, epochs=10):
     # Exclude non-numeric columns
     numeric_data = data.select_dtypes(include=[np.number])
@@ -62,10 +62,12 @@ def train_lstm_model(data, time_steps=100, epochs=10):
 
 def get_predicted_price(model, scaler, data):
     # Separate numerical features (excluding time)
-    numeric_data = data[:, 1:]  # Assuming time is in the first column
+    numeric_data = data[:, 1:].astype(float)  # Assuming time is in the first column, convert to float
 
     # Check if all values are numerical
-    check_array(numeric_data, ensure_2d=False)
+    if np.isnan(numeric_data).any():
+        # Handle NaN values (e.g., impute or remove)
+        numeric_data = numeric_data[~np.isnan(numeric_data).any(axis=1)]  # Remove rows containing NaN values
 
     # Apply data normalization
     scaled_data = scaler.transform(numeric_data)
@@ -90,8 +92,8 @@ def get_predicted_price(model, scaler, data):
 threshold = 5  # You can adjust this threshold value according to preference
 
 # IEX Cloud API token with stock ticker
-api_token = 'pk_b9265a2cdaf141e5824b48450a797a65'
-symbol = 'VZ'
+api_token = 'pk_91452d2ecfaa41aead503d79464f6005'
+symbol = 'NVDA'
 data = fetch_intraday_data(symbol, api_token)
 
 if data is not None:
@@ -108,10 +110,16 @@ if data is not None:
     if model is not None and scaler is not None:
         predicted_price = get_predicted_price(model, scaler, data.values)
         print("Predicted price:", predicted_price)
-        # Compare the LSTM model's predicted price with the current price
-        if predicted_price[0][0] > current_price + threshold:
+
+        # Calculate the expected price based on the predicted change
+        predicted_change = predicted_price[0][0]
+        expected_price = current_price + predicted_change
+        print("Expected price:", expected_price)
+
+        # Compare the LSTM model's predicted price change with the current price
+        if predicted_change > 0:
             print("The stock is expected to rise.")
-        elif predicted_price[0][0] < current_price - threshold:
+        elif predicted_change < 0:
             print("The stock is expected to fall.")
         else:
             print("The stock is expected to remain stable.")
