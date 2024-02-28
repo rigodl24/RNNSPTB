@@ -19,12 +19,11 @@ def fetch_intraday_data(symbol, api_token, range='20Y'):
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
 
+        # Handling missing values
+        df.fillna(method='ffill', inplace=True)
+
         # Exclude non-numeric columns
         numeric_data = df.select_dtypes(include=[np.number])
-
-        # Check if 'minute' column exists before dropping
-        if 'minute' in numeric_data.columns:
-            numeric_data.drop(columns=['minute'], inplace=True)  # Drop non-numeric column 'minute'
 
         return numeric_data
     except requests.exceptions.RequestException as e:
@@ -68,7 +67,7 @@ def train_lstm_model(data, time_steps=None, epochs=10, validation_split=0.2):
     model.compile(loss='mean_squared_error', optimizer='adam')
 
     # Train the model
-    history = model.fit(X_train, y_train, epochs=epochs, validation_data=(X_val, y_val))
+    history = model.fit(X_train, y_train, epochs=epochs, validation_data=(X_val, y_val), verbose=0)
 
     # Plot training & validation loss values
     plt.plot(history.history['loss'])
@@ -94,6 +93,7 @@ def train_lstm_model(data, time_steps=None, epochs=10, validation_split=0.2):
     print("Mean Squared Error on Validation Set:", mse)
 
     return model, scaler
+
 def get_predicted_price(model, scaler, time_steps, data):
     # Apply data normalization
     scaled_data = scaler.transform(data.astype(float))
@@ -113,12 +113,9 @@ def get_predicted_price(model, scaler, time_steps, data):
     predicted_price = scaler.inverse_transform(predicted_price)
     return predicted_price
 
-# Define a threshold value
-#threshold = 5  # You can adjust this threshold value according to preference
-
 # IEX Cloud API token with stock ticker
 api_token = 'pk_91452d2ecfaa41aead503d79464f6005'
-symbol = 'GME'
+symbol = 'LAZR'
 
 # Fetch intraday data for the past 20 years
 data = fetch_intraday_data(symbol, api_token, range='20Y')
@@ -177,4 +174,3 @@ if data is not None:
         print("The stock is expected to fall.")
     else:
         print("The stock is expected to remain stable.")
-
