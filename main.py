@@ -30,6 +30,20 @@ def fetch_intraday_data(symbol, api_token, range='20Y'):
         print("Error fetching data:", e)
         return None
 
+def fetch_sp500_data(api_token, range='20Y'):
+    url = f'https://cloud.iexapis.com/stable/stock/market/index/spy/chart/{range}?token={api_token}'
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        df = pd.DataFrame(data)
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        return df
+    except requests.exceptions.RequestException as e:
+        print("Error fetching S&P 500 data:", e)
+        return None
+
 def train_lstm_model(data, time_steps=None, epochs=10, validation_split=0.2):
     # Split data into training and validation sets
     train_size = int(len(data) * (1 - validation_split))
@@ -37,9 +51,9 @@ def train_lstm_model(data, time_steps=None, epochs=10, validation_split=0.2):
     val_data = data.iloc[train_size:]
 
     # Normalize the data
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_train_data = scaler.fit_transform(train_data)
-    scaled_val_data = scaler.transform(val_data)
+    scaler = MinMaxScaler()  # Create scaler instance
+    scaled_train_data = scaler.fit_transform(train_data)  # Fit on training set
+    scaled_val_data = scaler.transform(val_data)  # Apply to validation set
 
     # Prepare training data
     X_train, y_train = [], []
@@ -59,15 +73,15 @@ def train_lstm_model(data, time_steps=None, epochs=10, validation_split=0.2):
 
     # Create the LSTM network
     model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=(time_steps, X_train.shape[2])))
-    model.add(LSTM(units=50, return_sequences=True))  # Second LSTM layer
-    model.add(LSTM(units=50))  # Third LSTM layer
+    model.add(LSTM(units=32, return_sequences=True, input_shape=(time_steps, X_train.shape[2])))
+    model.add(LSTM(units=32, return_sequences=True))  # Second LSTM layer
+    model.add(LSTM(units=32))  # Third LSTM layer
     model.add(Dense(X_train.shape[2]))
 
     model.compile(loss='mean_squared_error', optimizer='adam')
 
     # Train the model
-    history = model.fit(X_train, y_train, epochs=epochs, validation_data=(X_val, y_val), verbose=0)
+    history = model.fit(X_train, y_train, batch_size=32, epochs=epochs, validation_data=(X_val, y_val), verbose=0)
 
     # Plot training & validation loss values
     plt.plot(history.history['loss'])
@@ -114,8 +128,8 @@ def get_predicted_price(model, scaler, time_steps, data):
     return predicted_price
 
 # IEX Cloud API token with stock ticker
-api_token = 'pk_91452d2ecfaa41aead503d79464f6005'
-symbol = 'LAZR'
+api_token = 'pk_de0a3502f30445c9adf9ebb0440afbda'
+symbol = 'TSLA'
 
 # Fetch intraday data for the past 20 years
 data = fetch_intraday_data(symbol, api_token, range='20Y')
@@ -133,7 +147,7 @@ if data is not None:
         models.append(model)
         scalers.append(scaler)
 
-    # Get predictions from each model
+        # Get predictions from each model
     predicted_prices = []
     for model, scaler in zip(models, scalers):
         predicted_price = get_predicted_price(model, scaler, 100, data.values)
