@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from keras.models import Sequential
-from keras.layers import Dense, LSTM
+from keras.layers import Dense, LSTM, Bidirectional, Dropout
 import requests
 from datetime import datetime, timedelta
 from keras.callbacks import EarlyStopping
@@ -77,9 +77,11 @@ def train_lstm_model(data, time_steps=None, epochs=20, validation_split=0.2):
 
     # Create the LSTM network
     model = Sequential()
-    model.add(LSTM(units=32, return_sequences=True, input_shape=(time_steps, X_train.shape[2])))
-    model.add(LSTM(units=32, return_sequences=True))  # Second LSTM layer
-    model.add(LSTM(units=32))  # Third LSTM layer
+    model.add(Bidirectional(LSTM(units=64, return_sequences=True), input_shape=(time_steps, X_train.shape[2])))
+    model.add(Dropout(0.2))
+    model.add(Bidirectional(LSTM(units=64, return_sequences=True)))
+    model.add(Dropout(0.2))
+    model.add(Bidirectional(LSTM(units=64)))
     model.add(Dense(X_train.shape[2]))
 
     model.compile(loss='mean_squared_error', optimizer='adam')
@@ -137,7 +139,7 @@ def get_predicted_price(model, scaler, time_steps, data, spy_data):
 
 # IEX Cloud API token with stock ticker
 api_token = 'pk_de0a3502f30445c9adf9ebb0440afbda'
-symbol = 'TSLA'
+symbol = 'CVNA'
 
 # Fetch SPY data
 spy_data = fetch_sp500_data(api_token, range='20Y')
