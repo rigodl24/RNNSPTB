@@ -1,4 +1,3 @@
-# Import packages
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -129,7 +128,7 @@ def get_predicted_price(model, scaler, time_steps, data):
 
 # IEX Cloud API token with stock ticker
 api_token = 'pk_de0a3502f30445c9adf9ebb0440afbda'
-symbol = 'TSLA'
+symbol = 'SNAP'
 
 # Fetch intraday data for the past 20 years
 data = fetch_intraday_data(symbol, api_token, range='20Y')
@@ -138,7 +137,7 @@ if data is not None:
     print("Intraday data:")
     print(data.head())
 
-    # Train multiple LSTM models with different random initializations
+    # Train multiple LSTM models with bagging
     num_models = 10
     models = []
     scalers = []
@@ -147,7 +146,7 @@ if data is not None:
         models.append(model)
         scalers.append(scaler)
 
-        # Get predictions from each model
+    # Get predictions from each model
     predicted_prices = []
     for model, scaler in zip(models, scalers):
         predicted_price = get_predicted_price(model, scaler, 100, data.values)
